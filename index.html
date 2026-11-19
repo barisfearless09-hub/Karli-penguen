@@ -1,0 +1,321 @@
+
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Karlı Penguen</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:#102c45;font-family:Arial;color:white;touch-action:none}
+canvas{display:block;width:100vw;height:100dvh;touch-action:none}
+#hud{position:fixed;top:12px;left:0;right:0;display:none;justify-content:space-between;padding:0 12px;pointer-events:none}
+.pill{background:#082b49dd;border:1px solid #c5edff88;border-radius:15px;padding:9px 13px;font-weight:bold}
+#menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#071b35aa;text-align:center;padding:18px}
+.panel{width:min(90%,360px);padding:25px 20px;border-radius:28px;border:2px solid #c4edff88;background:linear-gradient(145deg,#24648a,#0b2948);box-shadow:0 15px 45px #001a}
+h1{margin:4px 0 10px;font-size:32px}
+#mascot{font-size:75px}
+p{font-size:14px;line-height:1.6;color:#e3f7ff}
+button{background:linear-gradient(#ffe98c,#ffac32);border:0;border-radius:18px;padding:15px 30px;color:#58320a;font-size:20px;font-weight:bold;margin-top:12px;box-shadow:0 5px 0 #b86c20}
+button:active{transform:translateY(3px);box-shadow:0 2px 0 #b86c20}
+#hint{position:fixed;bottom:13px;left:0;right:0;text-align:center;font-size:12px;color:#fff9;pointer-events:none;display:none}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+ <div class="pill">⭐ <span id="score">0</span></div>
+ <div class="pill">🐟 <span id="fish">0</span></div>
+ <div class="pill">🏆 <span id="best">0</span></div>
+</div>
+<div id="hint">← → Şerit değiştir · ↑ Zıpla · ↓ Kay</div>
+<div id="menu">
+ <div class="panel">
+  <div id="mascot">🐧</div>
+  <h1>KARLI PENGUEN</h1>
+  <p id="message">Buzlu yolda maceraya hazır mısın?<br>Balıkları topla, engellerden kaç!</p>
+  <p>🏆 En iyi skor: <b id="menuBest">0</b></p>
+  <button id="start">OYUNA BAŞLA</button>
+ </div>
+</div>
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+let W,H,D;
+function resize(){
+ D=Math.min(devicePixelRatio||1,1.5);
+ W=innerWidth;H=innerHeight;
+ canvas.width=Math.round(W*D);canvas.height=Math.round(H*D);
+ ctx.setTransform(D,0,0,D,0,0);
+}
+addEventListener("resize",resize);resize();
+const $=id=>document.getElementById(id);
+
+let state="menu",lane=0,score=0,fish=0;
+let best=Number(localStorage.getItem("penguinBest")||0);
+let objects=[],last=0,elapsed=0,obTimer=0,fishTimer=0;
+let jumpTime=0,slideTime=0,runTime=0;
+let snow=[];
+for(let i=0;i<35;i++)snow.push({x:Math.random(),y:Math.random(),r:1+Math.random()*2,v:.2+Math.random()*.7});
+$("best").textContent=best;
+$("menuBest").textContent=best;
+
+function start(){
+ state="play";lane=0;score=0;fish=0;objects=[];
+ elapsed=0;obTimer=0;fishTimer=0;jumpTime=0;slideTime=0;runTime=0;
+ $("score").textContent=0;$("fish").textContent=0;
+ $("menu").style.display="none";
+ $("hud").style.display="flex";$("hint").style.display="block";
+ last=performance.now();
+ requestAnimationFrame(loop);
+}
+$("start").onclick=start;
+
+function horizon(){return H*.27}
+function roadWidth(z){return W*(.14+z*.55)}
+function roadY(z){return horizon()+z*H*.76}
+function laneX(l,z){return W/2+l*roadWidth(z)*.31}
+function scaleAt(z){return .32+z*1.12}
+
+function mountain(x,y,w,h){
+ ctx.fillStyle="#e7f8ff";
+ ctx.beginPath();ctx.moveTo(x-w/2,y+h);ctx.lineTo(x,y-h);ctx.lineTo(x+w/2,y+h);ctx.closePath();ctx.fill();
+ ctx.fillStyle="#b9e6f6";
+ ctx.beginPath();ctx.moveTo(x,y-h);ctx.lineTo(x+w*.13,y+h*.1);ctx.lineTo(x-w*.12,y+h*.12);ctx.closePath();ctx.fill();
+}
+function tree(x,y,s){
+ ctx.fillStyle="#d9f2fb";ctx.beginPath();ctx.ellipse(x,y+s*.65,s*.65,s*.22,0,0,7);ctx.fill();
+ ctx.fillStyle="#155c68";ctx.beginPath();ctx.moveTo(x,y-s*1.7);ctx.lineTo(x-s*.75,y+s*.7);ctx.lineTo(x+s*.75,y+s*.7);ctx.closePath();ctx.fill();
+ ctx.fillStyle="#c8f0f5";ctx.beginPath();ctx.moveTo(x,y-s*1.7);ctx.lineTo(x-s*.34,y-s*.2);ctx.lineTo(x+s*.1,y-s*.48);ctx.closePath();ctx.fill();
+}
+function background(){
+ let sky=ctx.createLinearGradient(0,0,0,H);
+ sky.addColorStop(0,"#4c9bc1");sky.addColorStop(.55,"#b6e5f5");sky.addColorStop(1,"#f1fbff");
+ ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ mountain(W*.15,H*.34,W*.4,H*.18);
+ mountain(W*.51,H*.31,W*.5,H*.23);
+ mountain(W*.9,H*.36,W*.4,H*.18);
+ ctx.fillStyle="#edfaff";ctx.fillRect(0,H*.38,W,H*.62);
+
+ // Yol
+ ctx.fillStyle="#8abbd0";
+ ctx.beginPath();ctx.moveTo(W*.43,horizon());ctx.lineTo(W*.57,horizon());ctx.lineTo(W*.99,H);ctx.lineTo(W*.01,H);ctx.closePath();ctx.fill();
+ ctx.strokeStyle="#f7ffff";ctx.lineWidth=5;
+ ctx.beginPath();ctx.moveTo(W*.43,horizon());ctx.lineTo(W*.01,H);ctx.moveTo(W*.57,horizon());ctx.lineTo(W*.99,H);ctx.stroke();
+
+ // Buz çizgileri
+ for(let i=0;i<9;i++){
+  let z=(i*.13+elapsed*.00004)%1;
+  let y=roadY(z),rw=roadWidth(z);
+  ctx.strokeStyle="#c5e8f3";ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(W/2-rw*.85,y);ctx.lineTo(W/2+rw*.85,y);ctx.stroke();
+ }
+ ctx.strokeStyle="#e9fbff99";ctx.lineWidth=2;ctx.setLineDash([12,13]);
+ for(let side of [-1,1]){
+  ctx.beginPath();ctx.moveTo(W/2+side*roadWidth(0)*.1,horizon());ctx.lineTo(W/2+side*roadWidth(1)*.1,H);ctx.stroke();
+ }
+ ctx.setLineDash([]);
+ for(let i=0;i<10;i++){
+  let y=H*.38+i*H*.071,s=9+i*3;
+  tree(W*.08+(i%2)*W*.055,y,s);
+  tree(W*.92-(i%2)*W*.055,y,s);
+ }
+}
+
+function penguin(x,y,s){
+ ctx.save();ctx.translate(x,y);ctx.scale(s,s);
+ let bob=Math.sin(runTime*12)*1.5;ctx.translate(0,bob);
+ ctx.fillStyle="#23465c55";ctx.beginPath();ctx.ellipse(0,43,29,8,0,0,7);ctx.fill();
+ ctx.fillStyle="#ff9d32";
+ ctx.beginPath();ctx.ellipse(-13,34,12,6,-.12,0,7);ctx.fill();
+ ctx.beginPath();ctx.ellipse(13,34,12,6,.12,0,7);ctx.fill();
+ let flap=Math.sin(runTime*12)*.12;
+ ctx.fillStyle="#253e53";
+ ctx.save();ctx.rotate(-flap);ctx.beginPath();ctx.ellipse(-27,4,9,23,-.3,0,7);ctx.fill();ctx.restore();
+ ctx.save();ctx.rotate(flap);ctx.beginPath();ctx.ellipse(27,4,9,23,.3,0,7);ctx.fill();ctx.restore();
+ let g=ctx.createLinearGradient(-30,-30,30,35);
+ g.addColorStop(0,"#607b8d");g.addColorStop(.5,"#294459");g.addColorStop(1,"#142d43");
+ ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(0,5,30,39,0,0,7);ctx.fill();
+ ctx.fillStyle="#fffaf0";ctx.beginPath();ctx.ellipse(0,14,21,27,0,0,7);ctx.fill();
+ ctx.fillStyle="#294459";ctx.beginPath();ctx.arc(0,-22,27,0,7);ctx.fill();
+ ctx.fillStyle="#fffaf0";ctx.beginPath();ctx.ellipse(0,-13,20,17,0,0,7);ctx.fill();
+ for(let side of [-1,1]){
+  ctx.fillStyle="#fff";ctx.beginPath();ctx.ellipse(side*10,-25,7,9,0,0,7);ctx.fill();
+  ctx.fillStyle="#14283a";ctx.beginPath();ctx.arc(side*10+1,-24,4,0,7);ctx.fill();
+  ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(side*10+2,-26,1.6,0,7);ctx.fill();
+  ctx.fillStyle="#ff9cabaa";ctx.beginPath();ctx.ellipse(side*19,-12,5,3,0,0,7);ctx.fill();
+ }
+ ctx.fillStyle="#ffad36";ctx.beginPath();ctx.moveTo(-6,-13);ctx.lineTo(6,-13);ctx.lineTo(0,-5);ctx.closePath();ctx.fill();
+ ctx.strokeStyle="#ed5d65";ctx.lineWidth=6;ctx.lineCap="round";
+ ctx.beginPath();ctx.arc(0,0,27,.25,Math.PI-.25);ctx.stroke();
+ ctx.beginPath();ctx.moveTo(17,2);ctx.lineTo(21,15);ctx.stroke();
+ ctx.restore();
+}
+
+function drawFish(o){
+ let x=laneX(o.lane,o.z),y=roadY(o.z)-10*scaleAt(o.z),s=scaleAt(o.z);
+ ctx.save();ctx.translate(x,y);ctx.scale(s,s);
+ ctx.fillStyle="#ffe78355";ctx.beginPath();ctx.arc(0,0,22,0,7);ctx.fill();
+ let gold=ctx.createLinearGradient(-12,-8,12,8);
+ gold.addColorStop(0,"#fff6a5");gold.addColorStop(.5,"#ffcb35");gold.addColorStop(1,"#e78b19");
+ ctx.fillStyle=gold;ctx.strokeStyle="#fff0a0";ctx.lineWidth=1.5;
+ ctx.beginPath();ctx.ellipse(0,0,12,8,0,0,7);ctx.fill();ctx.stroke();
+ ctx.beginPath();ctx.moveTo(-10,0);ctx.lineTo(-20,-8);ctx.lineTo(-19,8);ctx.closePath();ctx.fill();
+ ctx.fillStyle="#55391c";ctx.beginPath();ctx.arc(6,-2,1.6,0,7);ctx.fill();
+ ctx.restore();
+}
+
+function drawSnowman(o){
+ let x=laneX(o.lane,o.z),y=roadY(o.z),s=scaleAt(o.z);
+ ctx.save();ctx.translate(x,y);ctx.scale(s,s);
+ ctx.fillStyle="#29475a55";ctx.beginPath();ctx.ellipse(0,0,29,7,0,0,7);ctx.fill();
+ let snow=ctx.createLinearGradient(-20,-60,20,0);
+ snow.addColorStop(0,"#fff");snow.addColorStop(1,"#b9e4f4");
+ ctx.fillStyle=snow;ctx.beginPath();ctx.arc(0,-17,22,0,7);ctx.fill();ctx.beginPath();ctx.arc(0,-48,15,0,7);ctx.fill();
+ ctx.fillStyle="#253e50";ctx.fillRect(-16,-65,32,5);ctx.fillRect(-10,-78,20,15);
+ ctx.fillStyle="#23394a";ctx.beginPath();ctx.arc(-5,-50,2,0,7);ctx.arc(5,-50,2,0,7);ctx.fill();
+ ctx.fillStyle="#ff9e35";ctx.beginPath();ctx.moveTo(0,-44);ctx.lineTo(13,-40);ctx.lineTo(0,-37);ctx.fill();
+ ctx.strokeStyle="#895d3e";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-19,-17);ctx.lineTo(-31,-30);ctx.moveTo(19,-17);ctx.lineTo(31,-30);ctx.stroke();
+ ctx.strokeStyle="#e75b68";ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(-13,-30);ctx.lineTo(13,-30);ctx.stroke();
+ ctx.restore();
+}
+function drawIce(o){
+ let x=laneX(o.lane,o.z),y=roadY(o.z),s=scaleAt(o.z);
+ ctx.save();ctx.translate(x,y);ctx.scale(s,s);
+ ctx.fillStyle="#25485c55";ctx.beginPath();ctx.ellipse(0,0,30,7,0,0,7);ctx.fill();
+ let ice=ctx.createLinearGradient(-25,-45,25,0);
+ ice.addColorStop(0,"#d9f8ff");ice.addColorStop(.5,"#67c6e6");ice.addColorStop(1,"#277da6");
+ ctx.fillStyle=ice;ctx.strokeStyle="#e4fbff";ctx.lineWidth=3;
+ ctx.beginPath();ctx.moveTo(-25,-3);ctx.lineTo(-21,-35);ctx.lineTo(-7,-48);ctx.lineTo(12,-42);ctx.lineTo(26,-20);ctx.lineTo(23,-3);ctx.closePath();ctx.fill();ctx.stroke();
+ ctx.strokeStyle="#e5fbff";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-8,-39);ctx.lineTo(-2,-20);ctx.lineTo(8,-12);ctx.stroke();
+ ctx.restore();
+}
+function drawLog(o){
+ let x=laneX(o.lane,o.z),y=roadY(o.z),s=scaleAt(o.z);
+ ctx.save();ctx.translate(x,y);ctx.scale(s,s);
+ ctx.fillStyle="#25485c55";ctx.beginPath();ctx.ellipse(0,0,31,7,0,0,7);ctx.fill();
+ ctx.fillStyle="#9a6239";ctx.strokeStyle="#603a22";ctx.lineWidth=3;
+ ctx.beginPath();ctx.roundRect(-27,-25,54,25,7);ctx.fill();ctx.stroke();
+ ctx.fillStyle="#d69a5c";ctx.beginPath();ctx.ellipse(-25,-12,5,12,0,0,7);ctx.fill();
+ ctx.restore();
+}
+function drawObstacle(o){
+ if(o.type===0)drawSnowman(o);
+ else if(o.type===1)drawIce(o);
+ else drawLog(o);
+}
+
+function addObstacle(){
+ let l=Math.floor(Math.random()*3)-1;
+ objects.push({kind:"obstacle",type:Math.floor(Math.random()*3),lane:l,z:0,done:false});
+}
+function addFish(){
+ let l=Math.floor(Math.random()*3)-1;
+ for(let i=0;i<3;i++)objects.push({kind:"fish",lane:l,z:-i*.105,done:false});
+}
+
+// Hızlanma eğrisi: nesneler yaklaştıkça ekranda daha hızlı hareket eder.
+function travelSpeed(z){
+ return .00022*(1+Math.max(0,z)*2.1);
+}
+function update(dt){
+ elapsed+=dt;runTime+=dt/1000;score+=dt*.012;
+ obTimer+=dt;fishTimer+=dt;
+ if(obTimer>2050){obTimer=0;addObstacle();}
+ if(fishTimer>1450){fishTimer=0;addFish();}
+
+ for(let o of objects){
+  const zBefore=o.z;
+  // Her karede yaklaşma hızını güncelle
+  const movement=dt*travelSpeed(Math.max(0,zBefore));
+  o.z+=movement;
+
+  if(o.kind==="fish"&&!o.done){
+   // Balığın oyuncuya ulaştığı anı kaçırmamak için aralık kontrolü
+   if(o.lane===lane && zBefore<=.99 && o.z>=.76){
+    o.done=true;fish++;score+=8;
+    $("fish").textContent=fish;
+   }
+  }
+
+  if(o.kind==="obstacle"&&!o.done && zBefore<.96 && o.z>=.87){
+   if(o.lane===lane){
+    let jumped=jumpTime>.18;
+    // Buz ve kardan adamın üzerinden zıplanabilir
+    if(!jumped && slideTime<=0){
+     state="over";finish();return;
+    }
+   }
+   o.done=true;
+  }
+ }
+ objects=objects.filter(o=>o.z<1.15&&!o.done);
+ jumpTime=Math.max(0,jumpTime-dt/1000);
+ slideTime=Math.max(0,slideTime-dt/1000);
+ $("score").textContent=Math.floor(score);
+}
+function draw(){
+ background();
+ let sorted=objects.slice().sort((a,b)=>a.z-b.z);
+ for(let o of sorted){
+  if(o.kind==="fish")drawFish(o);else drawObstacle(o);
+ }
+ let px=laneX(lane,.95),py=H*.83;
+ if(jumpTime>0){
+  let t=1-jumpTime/.8;
+  py-=Math.sin(t*Math.PI)*92;
+ }
+ let size=Math.min(W/360,1.2);
+ if(slideTime>0){
+  ctx.save();ctx.translate(px,py+15);ctx.scale(1,.7);penguin(0,0,size);ctx.restore();
+ }else penguin(px,py,size);
+
+ ctx.fillStyle="#fff";
+ for(let s of snow){
+  s.y+=s.v*.0007;
+  if(s.y>1){s.y=0;s.x=Math.random();}
+  ctx.globalAlpha=.7;ctx.beginPath();ctx.arc(s.x*W,s.y*H,s.r,0,7);ctx.fill();
+ }
+ ctx.globalAlpha=1;
+}
+function finish(){
+ $("hud").style.display="none";$("hint").style.display="none";
+ if(Math.floor(score)>best){
+  best=Math.floor(score);localStorage.setItem("penguinBest",best);
+ }
+ $("menuBest").textContent=best;
+ $("mascot").textContent="🐧💙";
+ $("message").innerHTML="Yolculuk sona erdi!<br>⭐ Skor: <b>"+Math.floor(score)+"</b><br>🐟 Toplanan balık: <b>"+fish+"</b>";
+ $("start").textContent="TEKRAR OYNA";
+ $("menu").style.display="flex";
+}
+function loop(t){
+ if(state!=="play")return;
+ let dt=Math.min(t-last,40);last=t;
+ update(dt);draw();
+ if(state==="play")requestAnimationFrame(loop);
+}
+
+let sx=0,sy=0;
+canvas.addEventListener("touchstart",e=>{
+ let t=e.changedTouches[0];sx=t.clientX;sy=t.clientY;
+},{passive:false});
+canvas.addEventListener("touchend",e=>{
+ if(state!=="play")return;
+ let t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;
+ if(Math.max(Math.abs(dx),Math.abs(dy))<22)return;
+ if(Math.abs(dx)>Math.abs(dy)){
+  lane=Math.max(-1,Math.min(1,lane+(dx>0?1:-1)));
+ }else if(dy<0){
+  if(jumpTime<=0)jumpTime=.8;
+  slideTime=0;
+ }else{
+  slideTime=.55;jumpTime=0;
+ }
+},{passive:false});
+canvas.addEventListener("contextmenu",e=>e.preventDefault());
+draw();
+</script>
+</body>
+</html>
+
