@@ -1,0 +1,11 @@
+
+{
+  "name": "Karlı Penguen",
+  "short_name": "Penguen",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#dff5ff",
+  "theme_color": "#75c9ed",
+  "description": "Karlı dünyada penguenle sonsuz macera.",
+  "orientation": "portrait"
+}
